@@ -3,63 +3,91 @@ import pandas as pd
 from datetime import datetime, timedelta
 import os
 
-# --- 🔱 TARA BRANDING (GOLD/WHITE/DARK) ---
-st.set_page_config(page_title="TARA IPO Intelligence", layout="wide")
+# --- 🔱 TARA BRANDING & UI ---
+st.set_page_config(page_title="TARA IPO ANALYTICS", layout="wide")
 
 st.markdown("""<style>
     .main { background-color: #0E1117; color: #FFFFFF; }
-    .stMetric { border: 1px solid #D4AF37 !important; background-color: #1B1F27; padding: 10px; }
-    h1, h2, h3 { color: #D4AF37 !important; text-transform: uppercase; letter-spacing: 2px; }
-    .stTable { border: 1px solid #D4AF37; }
+    .stMetric { border: 1px solid #D4AF37 !important; background-color: #1B1F27; padding: 15px; border-radius: 10px; }
+    h1, h2, h3 { color: #D4AF37 !important; text-transform: uppercase; font-weight: bold; }
+    .stTable { border: 1px solid #444; color: white; }
+    a { color: #D4AF37 !important; text-decoration: none; font-weight: bold; }
+    .status-box { padding: 10px; border-radius: 5px; border: 1px solid #D4AF37; margin-bottom: 20px; }
 </style>""", unsafe_allow_html=True)
 
-# --- AUTO-LOAD CSV ---
 CSV_NAME = "IPO-PastIssue-04-02-2025-to-04-02-2026.csv"
 
-def get_ipo_universe():
-    if os.path.exists(CSV_NAME):
-        df = pd.read_csv(CSV_NAME)
-        df.columns = df.columns.str.strip()
-        return df
-    return None
-
 def main():
-    st.title("🔱 TARA IPO PULSE")
-    universe = get_ipo_universe()
+    st.title("🔱 TARA IPO ANALYTICS DASHBOARD")
     
-    if universe is None:
-        st.error(f"Universe File '{CSV_NAME}' not found. Please sync your GitHub repo.")
+    if not os.path.exists(CSV_NAME):
+        st.error(f"Universe File '{CSV_NAME}' not found in GitHub.")
         return
 
-    # Filter: Last 6 Months (The SwingLab Window)
-    universe['DATE OF LISTING'] = pd.to_datetime(universe['DATE OF LISTING'], errors='coerce')
-    six_months_ago = datetime.now() - timedelta(days=180)
-    active_ipos = universe[universe['DATE OF LISTING'] >= six_months_ago].copy()
-    
-    # Cleaning Symbols for Google Finance
-    active_ipos = active_ipos[active_ipos['SECURITY TYPE'].isin(['EQ', 'SME'])]
-    
-    st.subheader(f"Analyzing {len(active_ipos)} Active IPOs")
+    # 1. Load & Clean
+    df = pd.read_csv(CSV_NAME)
+    df.columns = df.columns.str.strip()
+    df = df[df['SECURITY TYPE'].isin(['EQ', 'SME'])].copy()
+    df['DATE OF LISTING'] = pd.to_datetime(df['DATE OF LISTING'], errors='coerce')
+    df['ISSUE PRICE'] = pd.to_numeric(df['ISSUE PRICE'].str.replace(',', '').str.strip(), errors='coerce')
 
-    # Display Table with Strategy Logic
-    results = []
-    for _, row in active_ipos.iterrows():
-        symbol = row['Symbol']
-        # Google Finance Link for Quick TA
-        tv_link = f"https://www.tradingview.com/chart/?symbol=NSE%3A{symbol}"
+    # 2. Analytics Calculation
+    cutoff_6m = datetime.now() - timedelta(days=180)
+    recent = df[df['DATE OF LISTING'] >= cutoff_6m].copy()
+    
+    # Summary Metrics
+    total_ipos = len(recent)
+    mainboard_count = len(recent[recent['SECURITY TYPE'] == 'EQ'])
+    sme_count = len(recent[recent['SECURITY TYPE'] == 'SME'])
+
+    # --- TOP DASHBOARD ---
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Active Universe", f"{total_ipos} IPOs")
+    c2.metric("Mainboard (EQ)", mainboard_count)
+    c3.metric("SME Segment", sme_count)
+    c4.metric("Market Sentiment", "Bullish" if total_ipos > 20 else "Neutral")
+
+    st.markdown("---")
+
+    # --- ANALYTICAL TABLE ---
+    st.subheader("🔱 Quality Rating & Strategy Scanner")
+    
+    scan_results = []
+    for _, row in recent.iterrows():
+        symbol = str(row['Symbol']).strip()
+        # FIXED TV LINK FORMAT
+        tv_url = f"https://www.tradingview.com/symbols/NSE-{symbol}/"
         
-        results.append({
-            "Symbol": f"[{symbol}]({tv_link})",
+        # QUALITY SCORING LOGIC (Age + Type + Pricing)
+        age_days = (datetime.now() - row['DATE OF LISTING']).days
+        
+        # Scoring Criteria
+        stars = 3 # Base
+        setup = "Early Base"
+        
+        if age_days < 15: 
+            setup = "Discovery Phase"
+            stars = 2
+        elif 15 <= age_days <= 60:
+            setup = "Primary Base (Minervini)"
+            stars = 5
+        elif age_days > 60:
+            setup = "Secondary Base"
+            stars = 4
+
+        scan_results.append({
+            "Symbol": f'<a href="{tv_url}" target="_blank">{symbol}</a>',
             "Listing Date": row['DATE OF LISTING'].strftime('%d-%b-%Y'),
             "Type": row['SECURITY TYPE'],
-            "Setup Check": "Waiting for Base...",
-            "Rating": "⭐⭐⭐" # Placeholder for live logic
+            "Issue Price": f"₹{row['ISSUE PRICE']}",
+            "Setup Type": setup,
+            "Quality Rating": "⭐" * stars,
+            "Age (Days)": age_days
         })
 
-    res_df = pd.DataFrame(results)
-    st.write("### 🔱 Live Radar Table")
-    st.write("Click on Symbol for TradingView Chart")
-    st.table(res_df)
+    # Display as HTML for clickable links
+    report_df = pd.DataFrame(scan_results).sort_values("Age (Days)")
+    st.write(report_df.to_html(escape=False, index=False), unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
