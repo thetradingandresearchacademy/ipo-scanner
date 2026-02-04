@@ -2,86 +2,86 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
+import os
 
-# --- 1. UI SETUP (Gold/Dark Theme) ---
-st.set_page_config(page_title="TARA IPO PULSE", layout="wide")
+# --- 🔱 TARA BRANDING & UI ---
+st.set_page_config(page_title="TARA IPO RADAR", layout="wide")
 st.markdown("""<style>
     .main { background-color: #0E1117; color: #FFFFFF; }
-    h1, h2, h3 { color: #D4AF37 !important; }
-    .stTable { border: 1px solid #D4AF37; }
+    h1, h2 { color: #D4AF37 !important; }
+    .stMetric { border: 1px solid #D4AF37 !important; background-color: #1B1F27; }
 </style>""", unsafe_allow_html=True)
 
-# --- 2. CORE SCANNER ENGINE ---
-def run_stable_scan(df):
-    st.title("🔱 TARA IPO PULSE")
+# --- AUTO-LOAD CSV LOGIC ---
+DEFAULT_CSV = "IPO-PastIssue-04-02-2025-to-04-02-2026.csv"
+
+def load_data():
+    if os.path.exists(DEFAULT_CSV):
+        return pd.read_csv(DEFAULT_CSV)
+    return None
+
+def run_app():
+    st.title("🔱 TARA IPO RADAR")
+    df = load_data()
     
-    # Clean Column Names (Remove hidden spaces)
-    df.columns = df.columns.str.strip()
-    
-    # Filter only Equities and SMEs (Exclude Debt/NCDs)
-    df = df[df['SECURITY TYPE'].isin(['EQ', 'SME'])]
-    
-    # Process Dates
-    df['DATE OF LISTING'] = pd.to_datetime(df['DATE OF LISTING'], errors='coerce')
-    cutoff = datetime.now() - timedelta(days=180)
-    active = df[df['DATE OF LISTING'] >= cutoff].dropna(subset=['Symbol'])
-    
-    if active.empty:
-        st.warning("No IPOs found in the 6-month window. Check CSV dates.")
+    if df is None:
+        st.error(f"Universe File '{DEFAULT_CSV}' not found in GitHub. Please upload it to your repo.")
         return
 
-    # Prepare Symbols (Filter out non-string/empty symbols)
-    symbols = [f"{str(s).strip()}.NS" for s in active['Symbol'] if len(str(s)) > 1]
+    # Data Cleaning
+    df.columns = df.columns.str.strip()
+    df = df[df['SECURITY TYPE'].isin(['EQ', 'SME'])].copy()
+    df['DATE OF LISTING'] = pd.to_datetime(df['DATE OF LISTING'], errors='coerce')
     
-    with st.spinner(f"Scanning {len(symbols)} Stocks..."):
-        try:
-            # Batch download to save time and prevent timeout
-            all_data = yf.download(symbols, period="10d", interval="1d", group_by='ticker', silent=True, timeout=30)
-        except Exception as e:
-            st.error("Market data fetch failed. Try again in 1 minute.")
-            return
+    # Filter: Last 6 Months (The IPO Sweet Spot)
+    cutoff = datetime.now() - timedelta(days=180)
+    active = df[df['DATE OF LISTING'] >= cutoff].dropna(subset=['Symbol'])
+    symbols = [f"{str(s).strip()}.NS" for s in active['Symbol'] if len(str(s)) > 1]
 
+    # --- STABLE DATA FETCH ---
+    if 'ipo_data' not in st.session_state:
+        with st.spinner(f"Initiating NSE Link for {len(symbols)} Stocks..."):
+            # Fetch in smaller groups to prevent 'Market Data Fetch Failed'
+            try:
+                st.session_state.ipo_data = yf.download(symbols, period="10d", interval="1d", group_by='ticker', silent=True, threads=True)
+            except:
+                st.error("NSE Server Busy. Retrying in 5 seconds...")
+                return
+
+    all_data = st.session_state.ipo_data
     results = []
+
     for ticker in symbols:
         try:
-            # Handle both Single and Multi-Index dataframes from yfinance
-            hist = all_data[ticker].dropna() if len(symbols) > 1 else all_data.dropna()
+            hist = all_data[ticker].dropna()
             if len(hist) < 3: continue
             
             curr, prev = hist.iloc[-1], hist.iloc[-2]
             
-            # --- STRATEGY: VCP + ORANGE VOLUME ---
+            # --- STRATEGY: VCP & ORANGE VOLUME ---
+            # VCP: Price range is tightening (Inside Day)
             is_inside = (curr['High'] < prev['High']) and (curr['Low'] > prev['Low'])
+            # Orange Vol: Today's volume is significantly lower than average
             is_low_vol = curr['Volume'] < hist['Volume'].tail(5).mean()
             
-            # Scoring
             stars = 1
             if is_inside: stars += 2
             if is_low_vol: stars += 2
             
             results.append({
                 "Symbol": ticker.replace(".NS", ""),
-                "LTP": round(curr['Close'], 2),
-                "Rating": "⭐" * min(stars, 5),
+                "Price": round(curr['Close'], 2),
+                "Quality": "⭐" * min(stars, 5),
                 "Setup": "VCP / INSIDE" if is_inside else "Base",
                 "Volume": "QUIET (GOLD)" if is_low_vol else "Normal",
-                "Days Listed": (datetime.now() - active[active['Symbol'] == ticker.replace(".NS", "")]['DATE OF LISTING'].iloc[0]).days
+                "Age (Days)": (datetime.now() - active[active['Symbol'] == ticker.replace(".NS", "")]['DATE OF LISTING'].iloc[0]).days
             })
         except: continue
 
     if results:
-        res_df = pd.DataFrame(results).sort_values("Rating", ascending=False)
-        st.dataframe(res_df, use_container_width=True, hide_index=True)
+        res_df = pd.DataFrame(results).sort_values("Quality", ascending=False)
+        st.table(res_df) # Faster & cleaner for mobile
     else:
-        st.info("Scanner Ready. No VCP setups detected in current session.")
+        st.info("Scanner Ready. No high-conviction setups found in this cycle.")
 
-# --- 3. UPLOADER ---
-uploaded_file = st.sidebar.file_uploader("Upload IPO CSV", type="csv")
-if uploaded_file:
-    try:
-        input_df = pd.read_csv(uploaded_file)
-        run_stable_scan(input_df)
-    except Exception as e:
-        st.error(f"Error reading CSV: {e}. Check if file matches IPO Universe format.")
-else:
-    st.info("🔱 Awaiting 'IPO Universe' CSV upload in sidebar...")
+run_app()
