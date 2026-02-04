@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import os
 
-# --- 🔱 TARA BRANDING & UI CONFIG ---
+# ---  TARA BRANDING & UI CONFIG ---
 st.set_page_config(page_title="TARA IPO RADAR", layout="wide")
 
 # High-Contrast Gold/White Theme with Centered Headers
@@ -35,7 +35,7 @@ def main():
     st.markdown(f"""
         <div class="header-container">
             <img src="{LOGO_URL}" class="logo-img">
-            <h1 class="main-title">🔱 TARA PRO IPO RADAR</h1>
+            <h1 class="main-title"> IPO LENS BY TARA</h1>
             <p class="sub-title">Powered by SwingLab</p>
         </div>
     """, unsafe_allow_html=True)
